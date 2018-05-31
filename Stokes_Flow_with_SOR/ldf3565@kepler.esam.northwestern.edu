@@ -1,0 +1,255 @@
+//Lionel Fiske
+//Cuda SOR
+
+
+
+
+#include<stdio.h>
+#include<stdlib.h>
+#include<cuda.h>
+#include<cuda_runtime.h>
+
+//void KernelU(double* dev_U, double* dev_maxResU, int* dev_N, double* dev_dx, double* dev_mu);
+
+
+
+
+__global__ void KernelU(double* dev_U, double* dev_maxResU, int* dev_N, double* dev_dx, double* dev_mu){
+
+//__shared__ double localU[pointsPerBlock];
+
+
+//Since we are not interested in the residual I will keep resU resV and resP locally on card
+double uC=100;
+double uE=100;
+double uW=100;
+double uN=100;
+double uS=100;
+double pC=100;
+double pW=100;
+
+int i;
+int j;
+
+
+
+int tid=(blockIdx.x)*blockDim.x+threadIdx.x;
+
+
+
+for(int color=1; color<3; color++){
+
+//Compute U Residual and update U
+	if(tid<N/2*N-1){
+
+		i=tid%N; //U has N cols
+		j=tid/N;
+
+		i=2*i + (j+color)%2; //Color selector 
+
+		//Center points of stencil 
+		uC=U[i+N*j];
+		pC=P[i+(N-1)*j]; 
+
+
+		//Handle the x left boundary 
+		if(i!=0 ){
+			uW=U[i-1+N*j];
+			pW=P[(i-1)+(N-1)*j];
+		}
+
+		//left points
+		if(i==0 ){
+			uW=uC;
+			pW=2*P_const - pC;
+		}
+
+		//handle x right interior points
+		if(i!=N-1){
+		uE=U[i+1+N*j];
+		}
+
+		//handle x right boundary points
+		if(i==N-1){
+		uE=uC;
+		pC=-P[i-1+(N-1)*j]; 
+		}
+
+
+		//Handle the up interior point
+		if(j!=0 ){
+			uN=U[i+N*(j-1)];
+		}
+
+		//Handle the y top boundary case
+		if(j==0 ){
+			uN=-uC;
+		}
+
+		//Handle the y down interior case
+		if(j!=(N-1)-1 ){
+			uS=U[i+N_col*(j+1)];
+		}
+
+		//Handle the y down boundary case
+		if(j==(N-1)-1 ){
+			uS=-uC;
+		}
+
+		// Compute Residual 
+			resU= mu*(uE + uW - 2*uC)+ mu*(uN + uS - 2*uC) - dx*(pC-pW);
+			U[i+N*j]=U[i+N*j]+ omega*resU;
+
+		//Check if this is the biggest residual 
+
+			if(resU>maxResU){
+				maxResU=resU;
+			}
+
+		}
+
+	}
+}
+
+
+
+void main(int argc, char* argv[]){
+
+//Since the error tolerance is 1e-5 I will just use floats instead of doubles to reduce memory transfer times
+// and number of blocks
+
+// Get Passed in Params
+int	   N=atoi(argv[1]); 
+double mu=atof(argv[2]); 
+double omega=atof(argv[3]); 
+double P_const=atof(argv[4]); 
+double tol=atof(argv[5]); 
+double dx=1/N ;
+
+
+//as in the book so in my code
+	cudaDeviceProp prop;
+	int dev;
+	memset(&prop, 0, sizeof(cudaDeviceProp));
+	prop.multiProcessorCount =13; 
+	cudaChooseDevice(&dev, &prop);
+	cudaSetDevice(dev);
+	cudaGetDeviceProperties(&prop,dev);
+// Now props has the info I need to// my code
+
+//Host Data
+
+
+	double* u=calloc((N-1)*N,sizeof(double)); 				
+	double* v=calloc((N-1)*N,sizeof(double)); 	
+	double* p=calloc((N-1)*(N-1),sizeof(double)); 		
+	double currentResidual=100;
+
+
+
+//Compute the number of blocks I need.
+	int storageOfRow=N*sizeof(double);
+	int totalFastMemory=prop.sharedMemPerBlock
+	int rowsPerBlock=(total_fast_memory/storageOfRow);
+
+	//So we want each block to carry some of U V and P and they need additional storage
+	// for the rows bove and below so u has N rows but we assume that rowsperblock is 2 less than it actually is 
+	//then we have N for U and (N-1) for v and P 
+
+
+//Handle Device Data 
+	double* dev_u;	
+	double* dev_v; 	
+	double* dev_p; 
+
+	double*	dev_N;
+	double* dev_mu; 
+	double* dev_dx; 
+	double* dev_omega; 
+	double* dev_P_const; 
+	double* dev_tol; 
+
+	double* dev_maxResU; 
+	double* dev_maxResV; 
+	double* dev_maxResP; 
+
+	int numberOfBlocksU=N/(rowsPerBlock-2) ; 
+	int numberOfBlocksV=(N-1)/(rowsPerBlock-2) ; 
+	int numberOfBlocksP=(N-1)/(rowsPerBlock-2) ; 
+
+	int* dev_numberOfBlocksU; 
+	int* dev_numberOfBlocksV; 
+	int* dev_numberOfBlocksP; 
+
+	cudaMalloc((void*) &dev_u, (N-1)*N,sizeof(double));
+	cudaMalloc((void*) &dev_v, (N-1)*N,sizeof(double));
+	cudaMalloc((void*) &dev_p, (N-1)*(N-1),sizeof(double));
+
+	cudaMalloc((void*) &dev_N, sizeof(int));
+	cudaMalloc((void*) &dev_mu, sizeof(double));
+	cudaMalloc((void*) &dev_dx, sizeof(double));
+	cudaMalloc((void*) &dev_omega, sizeof(double));
+	cudaMalloc((void*) &dev_P_const, sizeof(double));
+	cudaMalloc((void*) &dev_tol, sizeof(double));
+
+	cudaMalloc((void*) &dev_ResU, (N-1)*N*sizeof(double));
+	cudaMalloc((void*) &dev_ResV, (N-1)*N*sizeof(double));
+	cudaMalloc((void*) &dev_ResP,(N-1)*(N-1)*sizeof(double));
+
+	cudaMalloc((void*) &dev_numberOfBlocksU, sizeof(int));
+	cudaMalloc((void*) &dev_numberOfBlocksV, sizeof(int));
+	cudaMalloc((void*) &dev_numberOfBlocksP, sizeof(int));
+
+
+	cudaMemcpy( dev_N, &N, sizeof(int), cudaMemcpyHostToDevice);
+	cudaMemcpy( dev_mu, &mu, sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy( dev_dx, &dx, sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy( dev_omega, &omega, sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy( dev_P_const, &P_const, sizeof(double), cudaMemcpyHostToDevice);
+	cudaMemcpy( dev_tol, &tol, sizeof(double), cudaMemcpyHostToDevice);
+
+	//cudaMemcpy( dev_ResU, &currentResidual, (N-1)*N*sizeof(double), cudaMemcpyHostToDevice);
+	//cudaMemcpy( dev_ResV, &currentResidual, (N-1)*N*sizeof(double), cudaMemcpyHostToDevice);
+	//cudaMemcpy( dev_ResP, &currentResidual, (N-1)*(N-1)*sizeof(double), cudaMemcpyHostToDevice);
+
+	cudaMemcpy( dev_numberOfBlocksU, &numberOfBlocksU, sizeof(int), cudaMemcpyHostToDevice);
+	cudaMemcpy( dev_numberOfBlocksV, &numberOfBlocksV, sizeof(int), cudaMemcpyHostToDevice);
+	cudaMemcpy( dev_numberOfBlocksP, &numberOfBlocksP, sizeof(int), cudaMemcpyHostToDevice);
+
+
+
+
+
+
+
+
+
+
+
+
+
+	Free(u);
+	Free(v);
+	Free(p);
+
+	cudaFree(dev_u);
+	cudaFree(dev_v);
+	cudaFree(dev_p);
+
+	cudaFree(dev_numberOfBlocksU);
+	cudaFree(dev_numberOfBlocksV);
+	cudaFree(dev_numberOfBlocksP);
+
+	cudaFree(dev_N);
+	cudaFree(dev_mu);
+	cudaFree(dev_dx);
+	cudaFree(dev_omega);
+	cudaFree(dev_P_const);
+	cudaFree(dev_omega);
+	cudaFree(dev_tol);
+	cudaFree(dev_maxResU);
+	cudaFree(dev_maxResV);
+	cudaFree(dev_maxResP);
+
+
+}

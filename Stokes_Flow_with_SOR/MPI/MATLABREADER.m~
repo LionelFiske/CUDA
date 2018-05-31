@@ -1,0 +1,40 @@
+clear
+fid = fopen('StokesU.out', 'r');
+
+N=50;
+U=zeros(N-1,N);
+    for i=(1:N*N-1)  
+        U(floor(i/(N))+1,mod(i,N-1)+1)=fread(fid,1,'*double');
+    end
+fclose(fid)
+
+
+fid = fopen('StokesV.out', 'r');
+
+N=50;
+V=zeros(N,N-1);
+    for i=(1:N*N-1)  %why?
+        V(floor(i/(N-1))+1,mod(i,N)+1)=fread(fid,1,'*double');
+    end
+    
+fclose(fid)
+
+
+fid = fopen('StokesP.out', 'r');
+
+N=50;
+P=zeros(N-1,N);
+    for i=(1:N*N-1)  %why?
+        P(floor(i/(N))+1,mod(i,N-1)+1)=fread(fid,1,'*double');
+    end
+fclose(fid)
+
+%%
+figure(2) 
+
+
+imagesc(DATA)
+title('u')
+colorbar  
+
+
